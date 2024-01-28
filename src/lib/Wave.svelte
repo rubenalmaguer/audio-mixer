@@ -23,7 +23,6 @@
   let silentWave;
   let regions;
   let activeRegion;
-  let activeAudio;
   let envelope;
   let currentVolume;
   let playButton;
@@ -31,14 +30,6 @@
   let audios;
   $: {
     audios = [audioElement];
-  }
-
-  $: {
-    if (activeRegion && audios) {
-      activeAudio = audios.find(
-        (audio) => audio?.dataset?.regionId === activeRegion.id
-      );
-    }
   }
 
   onMount(async () => {
@@ -111,16 +102,12 @@
 
     bgWave.on("timeupdate", (currentTime) => {
       silentWave.setTime(currentTime);
-      if (activeAudio) {
-        activeAudio.currentTime =
-          activeAudio.currentTime + activeAudio.dataset.startTime;
-        if (bgWave.isPlaying) {
-          activeAudio.play();
-        } else {
-          activeAudio.pause();
-        }
-      }
     });
+
+    /*     bgWave.on("audioprocess", (currentTime) => {
+      //An alias of timeupdate but only when the audio is playing
+      silentWave.setTime(currentTime);
+    }); */
   }
 
   function setupSilentWave(duration) {
@@ -158,10 +145,11 @@
     regions.on("region-in", (region) => {
       console.log("region-in", region);
       activeRegion = region;
-      /*         const audios = [...document.querySelectorAll("audio")];
-      audios
-        .find((audio) => audio.dataset.regionId === activeRegion.id)
-        .play(); */
+      /*       const activeAudio = audios.find(
+        (audio) => audio.dataset.regionId === activeRegion.id
+      );
+      activeAudio.currentTime = 1;
+      activeAudio.play(); */
     });
     regions.on("region-out", (region) => {
       console.log("region-out", region);
@@ -204,10 +192,8 @@
     audio.dataset.regionId = newRegion.id;
     audio.dataset.startTime = newRegion.start;
 
-    console.log(newRegion);
-
     // Inception Wave
-    WaveSurfer.create({
+    const innerWave = WaveSurfer.create({
       interact: false,
       height: VOICE_WAVE_HEIGHT,
       container: innerDiv,
@@ -217,6 +203,8 @@
       url: VOICE_FILE,
       sampleRate: 44100, // Default is only 8000!, consider 48000Hz
     });
+
+    innerWave;
   }
 
   function randomizePoints() {
