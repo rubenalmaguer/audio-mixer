@@ -17,29 +17,32 @@
     gradualVolumeChange,
     applyEnevelopePoints,
     createSilence,
-  } from "./AudioDownloader.js";
+  } from "./audio-utilities.js";
 
   let bgWave;
   let silentWave;
   let regions;
-  let activeRegion;
+  let singleRegions = [];
   let envelope;
   let currentVolume;
   let playButton;
   let audioElement;
+  let audioElement2;
   let audios;
   $: {
-    audios = [audioElement];
+    audios = [audioElement, audioElement2];
   }
+  let miniWaves = [];
 
   onMount(async () => {
     audioElement.src = VOICE_FILE;
+    audioElement2.src = VOICE_FILE;
 
     setupBackgroundWave();
 
-    bgWave.on("decode", (duration) => {
+    bgWave.once("decode", (duration) => {
       setupSilentWave(duration);
-      silentWave.on("decode", () => {
+      silentWave.once("decode", () => {
         setupRegions();
       });
     });
@@ -61,16 +64,11 @@
       EnvelopePlugin.create({
         volume: 0.8,
         lineColor: "rgba(255, 0, 0, 0.5)",
-        lineWidth: "4px",
+        lineWidth: "4",
         dragPointSize: isMobile ? 20 : 12,
         dragLine: !isMobile,
         dragPointFill: "rgba(0, 255, 255, 0.8)",
         dragPointStroke: "rgba(0, 0, 0, 0.5)",
-
-        points: [
-          { time: 0.2, volume: 0.7 },
-          { time: 0.4, volume: 0.1 },
-        ],
       })
     );
 
@@ -95,19 +93,17 @@
     });
     bgWave.on("play", () => {
       playButton.textContent = "Pause";
+      audios.forEach((a) => (a.style.pointerEvents = "none"));
     });
     bgWave.on("pause", () => {
       playButton.textContent = "Play";
+      audios.forEach((a) => (a.style.pointerEvents = ""));
     });
 
     bgWave.on("timeupdate", (currentTime) => {
+      // Sync background with silent (regions) wave.
       silentWave.setTime(currentTime);
     });
-
-    /*     bgWave.on("audioprocess", (currentTime) => {
-      //An alias of timeupdate but only when the audio is playing
-      silentWave.setTime(currentTime);
-    }); */
   }
 
   function setupSilentWave(duration) {
@@ -132,6 +128,45 @@
         }),
       ],
     });
+
+    silentWave.on("seeking", (currentTime) => {
+      // Seeking triggers while playing
+
+      if (bgWave.isPlaying() === false) {
+        audios.forEach((a) => a.pause());
+        return;
+      }
+
+      // It IS playing!
+      const activeRegions = [];
+      singleRegions.forEach((region) => {
+        if (region.start > currentTime || region.end < currentTime) return;
+        activeRegions.push(region);
+      });
+
+      if (!activeRegions.length) {
+        // Seeked to inactive area
+        audios.forEach((a) => a.pause());
+        return;
+      }
+
+      activeRegions.forEach((activeRegion) => {
+        const audio = audios.find(
+          (a) => a.dataset.regionId === activeRegion.id
+        );
+        /* console.log(audio.paused); */
+        audio.playbackRate = 1; // Force playback rate (TODO: allow it for WIP, but then get re-rendered audio before downloading mix). See: HTMLMediaElement.preservesPitch
+
+        const targetTime = currentTime - activeRegion.start;
+        const wiggleRoom = 0.1;
+
+        if (Math.abs(targetTime - audio.currentTime) > wiggleRoom) {
+          audio.currentTime = targetTime;
+        }
+
+        if (audio.paused) audio.play();
+      });
+    });
   }
 
   function setupRegions() {
@@ -143,45 +178,40 @@
     }); */
 
     regions.on("region-in", (region) => {
-      console.log("region-in", region);
-      activeRegion = region;
-      /*       const activeAudio = audios.find(
-        (audio) => audio.dataset.regionId === activeRegion.id
-      );
-      activeAudio.currentTime = 1;
-      activeAudio.play(); */
+      console.log("region-in", region.id);
+      console.log("you are here", bgWave.getCurrentTime());
     });
     regions.on("region-out", (region) => {
-      console.log("region-out", region);
-      if (activeRegion === region) {
-        activeRegion = null;
-      }
+      console.log("region-out", region.id);
     });
     regions.on("region-clicked", (region, e) => {
       e.stopPropagation(); // prevent triggering a click on the waveform
-      activeRegion = region;
       //region.play();
-      region.setOptions({ color: randomColor() });
+      /* let color = randomColor();
+      console.log("color: ", color); */
+      let color =
+        "rgba(40.044185605872244, 200.00341532174974, 152.20057365218236, 0.5)";
+      region.setOptions({ color: color });
     });
     // Reset the active region when the user clicks anywhere in the waveform
-    regions.on("interaction", () => {
-      activeRegion = null;
-    });
+    regions.on("interaction", () => {});
 
     regions.on("region-updated", (region) => {
-      console.log("Updated region", region);
+      // Undo default "avoidOverlapping"
+      // See: https://github.com/katspaugh/wavesurfer.js/blob/main/src/plugins/regions.ts
+      region.content.style.marginTop = "0";
     });
   }
 
-  function addRegion(audio) {
+  function addRegion(audio, i) {
     const innerDiv = document.createElement("div");
     innerDiv.style.border = "black 2px solid";
     innerDiv.style.borderRadius = "6px";
-    innerDiv.style.borderColor = randomColor();
+    innerDiv.style.borderColor = "steelblue";
 
     const newRegion = regions.addRegion({
-      start: 1,
-      end: audio.duration,
+      start: (i + 1) * 1.5,
+      end: (i + 1) * 1.5 + audio.duration,
       content: innerDiv,
       color: randomColor(),
       minLength: 0.5,
@@ -189,11 +219,15 @@
       resize: false,
     });
 
+    // Undo default "avoidOverlapping"
+    // See: https://github.com/katspaugh/wavesurfer.js/blob/main/src/plugins/regions.ts
+    newRegion.content.style.marginTop = "0";
+    singleRegions.push(newRegion);
+
     audio.dataset.regionId = newRegion.id;
-    audio.dataset.startTime = newRegion.start;
 
     // Inception Wave
-    const innerWave = WaveSurfer.create({
+    const miniWave = WaveSurfer.create({
       interact: false,
       height: VOICE_WAVE_HEIGHT,
       container: innerDiv,
@@ -204,7 +238,7 @@
       sampleRate: 44100, // Default is only 8000!, consider 48000Hz
     });
 
-    innerWave;
+    miniWaves.push(miniWave);
   }
 
   function randomizePoints() {
@@ -251,6 +285,7 @@ Volume: <span>{currentVolume}</span>
 </div>
 
 <audio bind:this={audioElement} controls></audio>
+<audio bind:this={audioElement2} controls></audio>
 
 <style>
   :global(#bg-wave-container ::part(cursor)) {
